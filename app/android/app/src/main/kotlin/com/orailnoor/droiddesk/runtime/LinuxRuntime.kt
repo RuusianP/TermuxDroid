@@ -327,6 +327,20 @@ class LinuxRuntime(private val context: Context) {
      * Execute a command inside the proot environment and return output.
      */
     fun executeCommand(command: String, onOutput: ((String) -> Unit)? = null): String {
+        activeCommandProcess?.let { process ->
+            try {
+                // If a process is already running (e.g. apt waiting for [Y/n]), 
+                // feed this command directly into its standard input!
+                Log.d(TAG, "Routing input to active command: $command")
+                val os = process.outputStream
+                os.write((command + "\n").toByteArray())
+                os.flush()
+                return ""
+            } catch (e: Exception) {
+                Log.w(TAG, "Active process closed or failed to receive input: ${e.message}")
+            }
+        }
+
         if (!isBootstrapped()) return "Error: Runtime not bootstrapped"
 
         val prootBin = File(context.applicationInfo.nativeLibraryDir, "libproot.so").absolutePath
