@@ -1399,7 +1399,7 @@ COMPLETE
     echo ""
     echo -e "${YELLOW}  ★━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━★${NC}"
     echo -e "${WHITE}     If you found this helpful, please subscribe to:${NC}"
-    echo -e "${RED}           ▶  orailnoor  on YouTube  ◀${NC}"
+    echo -e "${RED}           ▶  RuusianP  on GitHub  ◀${NC}"
     echo -e "${YELLOW}  ★━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━★${NC}"
     echo ""
 }
