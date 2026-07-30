@@ -102,7 +102,8 @@ show_banner() {
     ╔══════════════════════════════════════════╗
     ║                                          ║
     ║       Termux Droid Setup Script           ║
-    ║       X11 + Chroot/Proot + Modern XFCE    ║
+    ║       X11 + Chroot/Proot + Modern XFCE  ║
+    ║       Maintained by RuusianP             ║
     ║                                          ║
     ╚══════════════════════════════════════════╝
 BANNER
