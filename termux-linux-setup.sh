@@ -1,13 +1,13 @@
 #!/data/data/com.termux/files/usr/bin/bash
 #######################################################
-#  Termux Linux Setup Script
+#  Termux Droid Setup Script
 #
 #  Features:
 #  - XFCE4 / LXQt / MATE / KDE Desktop
 #  - Smart GPU acceleration (Turnip/Zink)
 #  - Termux-X11 display + optional VNC
 #  - Modern dark XFCE theme + auto wallpaper
-#  - Proot Linux container (Ubuntu/Debian/Kali)
+#  - Proot Linux container (Ubuntu) or Chroot (root required)
 #  - Proot App Bridge (apt installs appear in XFCE menu)
 #  - Python & Web Dev environment
 #######################################################
@@ -19,9 +19,13 @@ DE_CHOICE="1"
 DE_NAME="XFCE4"
 VNC_ENABLED=false
 SETUP_USERNAME="user"
+USE_CHROOT=false
 
-# Wallpaper URL — Ubuntu 4K wallpaper (set by user)
-WALLPAPER_URL="https://wallpapercave.com/download/ubuntu-4k-wallpapers-wp8303186"
+# Wallpaper URL — Ubuntu 22.04 wallpaper (JPEG)
+WALLPAPER_URL="https://assets.ubuntu.com/v1/0a5c0d3d-ubuntu-22-04-wallpaper.jpg"
+
+# Root mode: detect at runtime
+HAS_ROOT=false
 
 # ============== COLORS ==============
 RED='\033[0;31m'
@@ -76,9 +80,18 @@ spinner() {
 install_pkg() {
     local pkg=$1
     local name=${2:-$pkg}
-    (DEBIAN_FRONTEND=noninteractive apt-get install -y \
-        -o Dpkg::Options::="--force-confold" $pkg > /dev/null 2>&1) &
+    DEBIAN_FRONTEND=noninteractive apt-get install -y \
+        -o Dpkg::Options::="--force-confold" $pkg > /dev/null 2>&1 &
     spinner $! "Installing ${name}..."
+    return $?
+}
+
+install_pkg_checked() {
+    if ! install_pkg "$@"; then
+        echo -e "  ${RED}[!] Failed to install ${2:-$1} — continuing${NC}"
+        return 1
+    fi
+    return 0
 }
 
 # ============== BANNER ==============
@@ -88,8 +101,8 @@ show_banner() {
     cat << 'BANNER'
     ╔══════════════════════════════════════════╗
     ║                                          ║
-    ║       Termux Linux Setup Script          ║
-    ║       X11 + Proot + Modern XFCE          ║
+    ║       Termux Droid Setup Script           ║
+    ║       X11 + Chroot/Proot + Modern XFCE    ║
     ║                                          ║
     ╚══════════════════════════════════════════╝
 BANNER
@@ -102,6 +115,11 @@ setup_environment() {
     echo -e "${PURPLE}[*] Detecting your device...${NC}"
     echo ""
 
+    # Request Android storage access
+    echo -e "  ${YELLOW}[!] Termux needs storage access to save wallpapers and config files${NC}"
+    termux-setup-storage 2>/dev/null || true
+    echo ""
+
     DEVICE_MODEL=$(getprop ro.product.model 2>/dev/null || echo "Unknown")
     DEVICE_BRAND=$(getprop ro.product.brand 2>/dev/null || echo "Unknown")
     ANDROID_VERSION=$(getprop ro.build.version.release 2>/dev/null || echo "Unknown")
@@ -111,18 +129,31 @@ setup_environment() {
     echo -e "  [*] Device : ${WHITE}${DEVICE_BRAND} ${DEVICE_MODEL}${NC}"
     echo -e "  [*] Android: ${WHITE}${ANDROID_VERSION}${NC}"
 
-    if [[ "$GPU_VENDOR" == *"adreno"* ]] || \
-       [[ "$DEVICE_BRAND" =~ [Ss]amsung|[Oo]ne[Pp]lus|[Xx]iaomi|[Rr]edmi|[Pp]oco|[Mm]oto|motorola ]]; then
-        GPU_DRIVER="freedreno"
-        echo -e "  [*] GPU    : ${WHITE}Adreno — Hardware Acceleration Enabled${NC}"
+    GPU_RENDER_NODE="/dev/dri/renderD129"
+    if [ -c "$GPU_RENDER_NODE" ]; then
+        GPU_VENDOR_READ=$(cat /sys/class/drm/card0/device/vendor 2>/dev/null || echo "unknown")
+        case "$GPU_VENDOR_READ" in
+            *0x5143*|*"qcom"*|*"Qualcomm"*)
+                GPU_DRIVER="freedreno"
+                echo -e "  [*] GPU    : ${WHITE}Adreno — Hardware Acceleration Enabled${NC}"
+                ;;
+            *0x13b5*|*"ARM"*|*"Mali"*)
+                GPU_DRIVER="mali"
+                echo -e "  [*] GPU    : ${WHITE}Mali — Hardware Acceleration${NC}"
+                ;;
+            *)
+                GPU_DRIVER="zink_native"
+                echo -e "  [*] GPU    : ${WHITE}Other GPU — Zink/LLVMpipe fallback${NC}"
+                echo -e "${YELLOW}      [!] Recommend XFCE or LXQt for best performance.${NC}"
+                ;;
+        esac
     else
         GPU_DRIVER="zink_native"
-        echo -e "  [*] GPU    : ${WHITE}Non-Adreno — Zink/LLVMpipe fallback${NC}"
-        echo -e "${YELLOW}      [!] Recommend XFCE or LXQt for best performance.${NC}"
+        echo -e "  [*] GPU    : ${WHITE}No DRI device — Software rendering${NC}"
     fi
     echo ""
 
-    # ── Hardcoded to XFCE4 (DroidDesk default) ──
+    # ── Hardcoded to XFCE4 (Termux Droid default) ──
     DE_CHOICE="1"
     DE_NAME="XFCE4"
     echo -e "${GREEN}[+] Desktop: ${DE_NAME} (default)${NC}"
@@ -151,9 +182,24 @@ setup_environment() {
     # esac
     # echo -e "\n${GREEN}[+] Selected: ${DE_NAME}${NC}"
 
+    # ---- Root detection ----
+    if command -v su >/dev/null 2>&1 && su -c 'id -u' 2>/dev/null | grep -q '^0$'; then
+        HAS_ROOT=true
+        echo -e "  ${GREEN}[+] Root access detected${NC}"
+        echo -e "      ${YELLOW}You can use chroot (faster) or proot (compatible).${NC}"
+        read -p "  Use chroot mode for better performance? (y/N): " CHROOT_ANSWER
+        CHROOT_ANSWER=${CHROOT_ANSWER:-N}
+        if [[ "$CHROOT_ANSWER" =~ ^[Yy]$ ]]; then
+            USE_CHROOT=true
+            echo -e "  ${GREEN}[+] Chroot mode selected${NC}"
+        fi
+    else
+        echo -e "  ${YELLOW}[!] No root access — using proot mode${NC}"
+    fi
+
     # ---- Username ----
-    SETUP_USERNAME="root"
-    echo -e "  ${GREEN}[+] Proot User set to: ${SETUP_USERNAME} (Default)${NC}"
+    SETUP_USERNAME="termux"
+    echo -e "  ${GREEN}[+] Container user set to: ${SETUP_USERNAME}${NC}"
     sleep 1
 }
 
@@ -263,7 +309,168 @@ step_python() {
     echo -e "  [+] Python 3 installed"
 }
 
-# ============== STEP 9: PROOT ==============
+# ============== STEP 9a: CHROOT (root only) ==============
+step_chroot() {
+    update_progress
+    echo -e "${PURPLE}[Step ${CURRENT_STEP}/${TOTAL_STEPS}] Setting up Ubuntu Chroot...${NC}"
+    echo ""
+
+    CHROOT_DIR="$HOME/termux-droid/chroot"
+    CHROOT_ROOTFS="$CHROOT_DIR/rootfs"
+    CHROOT_TARBALL="$CHROOT_DIR/ubuntu-base.tar.gz"
+    mkdir -p "$CHROOT_DIR"
+
+    if [ -f "$CHROOT_ROOTFS/usr/bin/bash" ] && [ -f "$CHROOT_ROOTFS/etc/os-release" ]; then
+        echo -e "  ${GREEN}[+] Chroot rootfs already exists — skipping download${NC}"
+    else
+        echo -e "  [*] Downloading Ubuntu 24.04 base rootfs (ARM64)..."
+        wget -L -q --timeout=60 --tries=3 \
+            -O "$CHROOT_TARBALL" \
+            "https://cdimage.ubuntu.com/ubuntu-base/releases/24.04/release/ubuntu-base-24.04.4-base-arm64.tar.gz" &
+        spinner $! "Downloading Ubuntu rootfs (may take a while)..."
+        if [ ! -f "$CHROOT_TARBALL" ] || [ "$(wc -c < "$CHROOT_TARBALL")" -lt 1000000 ]; then
+            rm -f "$CHROOT_TARBALL"
+            echo -e "  ${RED}[!] Download failed or file too small${NC}"
+            return 1
+        fi
+        echo -e "  [+] Downloaded OK ($(du -h "$CHROOT_TARBALL" | cut -f1))"
+
+        echo -e "  [*] Extracting rootfs..."
+        mkdir -p "$CHROOT_ROOTFS"
+        tar -zxf "$CHROOT_TARBALL" -C "$CHROOT_ROOTFS" 2>/dev/null &
+        spinner $! "Extracting Ubuntu rootfs..."
+        if [ ! -f "$CHROOT_ROOTFS/usr/bin/bash" ]; then
+            echo -e "  ${RED}[!] Extraction failed${NC}"
+            return 1
+        fi
+        echo -e "  [+] Extraction complete"
+    fi
+
+    # ---- Configure rootfs ----
+    echo -e "  [*] Configuring chroot environment..."
+    mkdir -p "$CHROOT_ROOTFS/dev" "$CHROOT_ROOTFS/dev/pts" "$CHROOT_ROOTFS/proc" \
+             "$CHROOT_ROOTFS/sys" "$CHROOT_ROOTFS/tmp" "$CHROOT_ROOTFS/root"
+
+    # DNS
+    cat > "$CHROOT_ROOTFS/etc/resolv.conf" << 'RESOLVEOF'
+nameserver 8.8.8.8
+nameserver 1.1.1.1
+RESOLVEOF
+
+    # Hostname
+    echo "termux-droid" > "$CHROOT_ROOTFS/etc/hostname"
+
+    # Hosts
+    cat > "$CHROOT_ROOTFS/etc/hosts" << 'HOSTSEOF'
+127.0.0.1   localhost
+127.0.0.1   termux-droid
+::1         localhost ip6-localhost ip6-loopback
+HOSTSEOF
+
+    # APT sources (ARM64)
+    cat > "$CHROOT_ROOTFS/etc/apt/sources.list" << 'SOURCESEOF'
+deb http://ports.ubuntu.com/ubuntu-ports noble main restricted universe multiverse
+deb http://ports.ubuntu.com/ubuntu-ports noble-updates main restricted universe multiverse
+deb http://ports.ubuntu.com/ubuntu-ports noble-security main restricted universe multiverse
+SOURCESEOF
+
+    # Disable apt sandbox (needed on Android)
+    mkdir -p "$CHROOT_ROOTFS/etc/apt/apt.conf.d"
+    echo 'APT::Sandbox::User "root";' > "$CHROOT_ROOTFS/etc/apt/apt.conf.d/99-disable-sandbox"
+
+    # Root helper
+    local SU=""
+    command -v su >/dev/null 2>&1 && SU="su -c"
+
+    # Mount system filesystems
+    echo -e "  [*] Mounting system filesystems..."
+    $SU "mount --bind /dev \"$CHROOT_ROOTFS/dev\" 2>/dev/null" || true
+    $SU "mount --bind /proc \"$CHROOT_ROOTFS/proc\" 2>/dev/null" || true
+    $SU "mount --bind /sys \"$CHROOT_ROOTFS/sys\" 2>/dev/null" || true
+    $SU "mount -t devpts devpts \"$CHROOT_ROOTFS/dev/pts\" 2>/dev/null" || true
+    $SU "mount -t tmpfs tmpfs \"$CHROOT_ROOTFS/tmp\" 2>/dev/null" || true
+
+    # Install DE and tools inside chroot
+    echo -e "  [*] Updating package lists inside chroot..."
+    $SU "chroot \"$CHROOT_ROOTFS\" /bin/bash -c 'apt-get update -y -q' 2>/dev/null" &
+    spinner $! "Updating chroot package lists..."
+
+    echo -e "  [*] Installing desktop environment..."
+    local DE_PKGS=""
+    case $DE_CHOICE in
+        1) DE_PKGS="xfce4 xfce4-terminal xfce4-whiskermenu-plugin thunar mousepad dbus-x11";;
+        2) DE_PKGS="lxqt qterminal pcmanfm-qt featherpad dbus-x11";;
+        3) DE_PKGS="mate-desktop-environment mate-terminal dbus-x11";;
+        4) DE_PKGS="plasma-desktop konsole dolphin dbus-x11";;
+    esac
+    $SU "chroot \"$CHROOT_ROOTFS\" /bin/bash -c '\
+        DEBIAN_FRONTEND=noninteractive apt-get install -y -q --no-install-recommends $DE_PKGS \
+        2>/dev/null'" &
+    spinner $! "Installing $DE_NAME packages (may take a while)..."
+
+    # Install core tools
+    $SU "chroot \"$CHROOT_ROOTFS\" /bin/bash -c '\
+        DEBIAN_FRONTEND=noninteractive apt-get install -y -q --no-install-recommends \
+        sudo curl wget git nano htop python3 python3-pip ca-certificates \
+        2>/dev/null'" &
+    spinner $! "Installing core tools..."
+
+    # Mark as complete
+    echo "$DE_NAME" > "$CHROOT_DIR/.de_installed"
+
+    # Create chroot management scripts
+    cat > ~/start-chroot.sh << CHROOTEOF
+#!/data/data/com.termux/files/usr/bin/bash
+CHROOT_ROOTFS="$CHROOT_ROOTFS"
+
+# Use su for root commands
+SU=""
+command -v su >/dev/null 2>&1 && SU="su -c"
+
+# Mount system filesystems
+\$SU "mount --bind /dev \$CHROOT_ROOTFS/dev 2>/dev/null" || true
+\$SU "mount --bind /proc \$CHROOT_ROOTFS/proc 2>/dev/null" || true
+\$SU "mount --bind /sys \$CHROOT_ROOTFS/sys 2>/dev/null" || true
+\$SU "mount -t devpts devpts \$CHROOT_ROOTFS/dev/pts 2>/dev/null" || true
+\$SU "mount -t tmpfs tmpfs \$CHROOT_ROOTFS/tmp 2>/dev/null" || true
+
+echo ""
+echo "============================================="
+echo "  [*] Starting Ubuntu Chroot Shell"
+echo "============================================="
+echo ""
+
+export DISPLAY=:0
+export PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
+export HOME=/root
+export TMPDIR=/tmp
+export SHELL=/bin/bash
+export USER=root
+
+\$SU "chroot \$CHROOT_ROOTFS /bin/bash -l"
+CHROOTEOF
+    chmod +x ~/start-chroot.sh
+
+    cat > ~/stop-chroot.sh << STOPCHROOT
+#!/data/data/com.termux/files/usr/bin/bash
+CHROOT_ROOTFS="$CHROOT_ROOTFS"
+SU=""
+command -v su >/dev/null 2>&1 && SU="su -c"
+echo "Unmounting chroot filesystems..."
+\$SU "umount -l \$CHROOT_ROOTFS/dev/pts 2>/dev/null" || true
+\$SU "umount -l \$CHROOT_ROOTFS/dev 2>/dev/null" || true
+\$SU "umount -l \$CHROOT_ROOTFS/proc 2>/dev/null" || true
+\$SU "umount -l \$CHROOT_ROOTFS/sys 2>/dev/null" || true
+\$SU "umount -l \$CHROOT_ROOTFS/tmp 2>/dev/null" || true
+echo "Done."
+STOPCHROOT
+    chmod +x ~/stop-chroot.sh
+
+    echo -e "  [+] Created ~/start-chroot.sh and ~/stop-chroot.sh"
+    echo -e "  [+] Chroot environment ready at $CHROOT_ROOTFS"
+}
+
+# ============== STEP 9b: PROOT (non-root fallback) ==============
 step_proot() {
     update_progress
     echo -e "${PURPLE}[Step ${CURRENT_STEP}/${TOTAL_STEPS}] Setting up Proot Container...${NC}"
@@ -273,7 +480,7 @@ step_proot() {
     install_pkg "proot" "PRoot"
 
     echo ""
-    # ── Hardcoded to Ubuntu (DroidDesk default) ──
+    # ── Hardcoded to Ubuntu (Termux Droid default) ──
     PROOT_DISTRO="ubuntu"
     PROOT_LABEL="Ubuntu 22.04"
     echo -e "${GREEN}[+] Proot distro: ${PROOT_LABEL} (default)${NC}"
@@ -587,7 +794,77 @@ exec startplasma-x11"
     esac
 
     # ---- start-x11.sh ----
-    cat > ~/start-x11.sh << LAUNCHEREOF
+    if [ "$USE_CHROOT" = "true" ]; then
+        case $DE_CHOICE in
+            1) CHROOT_EXEC="dbus-run-session startxfce4";;
+            2) CHROOT_EXEC="dbus-run-session startlxqt";;
+            3) CHROOT_EXEC="dbus-run-session mate-session";;
+            4) CHROOT_EXEC="export KWIN_COMPOSE=O2ES; dbus-run-session startplasma-x11";;
+        esac
+        cat > ~/start-x11.sh << CHROOTLAUNCHER
+#!/data/data/com.termux/files/usr/bin/bash
+CHROOT_ROOTFS="$CHROOT_ROOTFS"
+
+SU=""
+command -v su >/dev/null 2>&1 && SU="su -c"
+
+echo ""
+echo "=============================================="
+echo "  [*] Starting ${DE_NAME} via Chroot + Termux-X11..."
+echo "=============================================="
+echo ""
+
+# Mount system filesystems
+\$SU "mount --bind /dev \$CHROOT_ROOTFS/dev 2>/dev/null" || true
+\$SU "mount --bind /proc \$CHROOT_ROOTFS/proc 2>/dev/null" || true
+\$SU "mount --bind /sys \$CHROOT_ROOTFS/sys 2>/dev/null" || true
+\$SU "mount -t devpts devpts \$CHROOT_ROOTFS/dev/pts 2>/dev/null" || true
+\$SU "mount -t tmpfs tmpfs \$CHROOT_ROOTFS/tmp 2>/dev/null" || true
+
+pkill -9 -f "termux.x11" 2>/dev/null
+pkill -9 -f "Xvnc" 2>/dev/null
+
+unset PULSE_SERVER
+pulseaudio --kill 2>/dev/null
+sleep 0.5
+echo "[*] Starting audio..."
+pulseaudio --start --exit-idle-time=-1
+sleep 1
+pactl load-module module-native-protocol-tcp auth-ip-acl=127.0.0.1 auth-anonymous=1 2>/dev/null
+
+echo "[*] Starting Termux-X11 on :0..."
+termux-x11 :0 -ac &
+sleep 3
+export DISPLAY=:0
+
+echo "----------------------------------------------"
+echo "  [*] Open the Termux-X11 app to see desktop"
+echo "----------------------------------------------"
+echo ""
+
+# Start desktop inside chroot
+\$SU "chroot \$CHROOT_ROOTFS /bin/bash -c '
+export DISPLAY=:0
+export PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
+export HOME=/root
+export TMPDIR=/tmp
+export SHELL=/bin/bash
+export USER=root
+export PULSE_SERVER=127.0.0.1
+export LIBGL_ALWAYS_SOFTWARE=1
+export GALLIUM_DRIVER=llvmpipe
+export NO_AT_BRIDGE=1
+
+export DBUS_SESSION_BUS_ADDRESS=unix:path=/tmp/dbus-session
+rm -f /tmp/dbus-session
+dbus-daemon --session --address=\$DBUS_SESSION_BUS_ADDRESS --fork --nopidfile 2>/dev/null || true
+
+mkdir -p /tmp/.X11-unix /tmp/runtime-root
+${CHROOT_EXEC}
+'"
+CHROOTLAUNCHER
+    else
+        cat > ~/start-x11.sh << LAUNCHEREOF
 #!/data/data/com.termux/files/usr/bin/bash
 echo ""
 echo "=============================================="
@@ -597,7 +874,6 @@ echo ""
 source ~/.config/linux-gpu.sh 2>/dev/null
 
 # Override Android's u0_a281 with the custom username
-# XFCE panel reads USER/LOGNAME for all user-facing displays
 export USER="$SETUP_USERNAME"
 export LOGNAME="$SETUP_USERNAME"
 export HOSTNAME="android-linux"
@@ -631,11 +907,31 @@ echo "----------------------------------------------"
 echo ""
 ${EXEC_CMD}
 LAUNCHEREOF
+    fi
     chmod +x ~/start-x11.sh
     echo -e "  [+] Created ~/start-x11.sh"
 
     # ---- stop-linux.sh ----
-    cat > ~/stop-linux.sh << STOPEOF
+    if [ "$USE_CHROOT" = "true" ]; then
+        cat > ~/stop-linux.sh << CHROOTSTOP
+#!/data/data/com.termux/files/usr/bin/bash
+CHROOT_ROOTFS="$CHROOT_ROOTFS"
+SU=""
+command -v su >/dev/null 2>&1 && SU="su -c"
+echo "Stopping all sessions..."
+pkill -9 -f "termux.x11" 2>/dev/null || true
+pkill -9 -f "pulseaudio" 2>/dev/null || true
+echo "Unmounting chroot filesystems..."
+\$SU "umount -l \$CHROOT_ROOTFS/dev/pts 2>/dev/null" || true
+\$SU "umount -l \$CHROOT_ROOTFS/dev 2>/dev/null" || true
+\$SU "umount -l \$CHROOT_ROOTFS/proc 2>/dev/null" || true
+\$SU "umount -l \$CHROOT_ROOTFS/sys 2>/dev/null" || true
+\$SU "umount -l \$CHROOT_ROOTFS/tmp 2>/dev/null" || true
+rm -f /tmp/.X1-lock /tmp/.X11-unix/X1 2>/dev/null
+echo "Done."
+CHROOTSTOP
+    else
+        cat > ~/stop-linux.sh << STOPEOF
 #!/data/data/com.termux/files/usr/bin/bash
 echo "Stopping all sessions..."
 pkill -9 -f "termux.x11" 2>/dev/null
@@ -647,6 +943,7 @@ pkill -9 -f "dbus" 2>/dev/null
 rm -f /tmp/.X1-lock /tmp/.X11-unix/X1 2>/dev/null
 echo "Done."
 STOPEOF
+    fi
     chmod +x ~/stop-linux.sh
     echo -e "  [+] Created ~/stop-linux.sh"
 }
@@ -824,11 +1121,11 @@ FREOF
     chmod +x ~/.config/xfce-first-run.sh
 
     # Register as XFCE autostart (one-shot)
-    cat > ~/.config/autostart/xfce-first-run.desktop << 'AREOF'
+    cat > ~/.config/autostart/xfce-first-run.desktop << AREOF
 [Desktop Entry]
 Type=Application
 Name=XFCE First Run Setup
-Exec=bash /root/.config/xfce-first-run.sh
+Exec=bash $HOME/.config/xfce-first-run.sh
 Hidden=false
 NoDisplay=true
 X-GNOME-Autostart-enabled=true
@@ -913,18 +1210,34 @@ Icon=utilities-terminal
 Type=Application
 EOF
 
-    cat > ~/Desktop/Proot.desktop << EOF
+    if [ "$USE_CHROOT" = "true" ]; then
+        cat > ~/Desktop/Chroot.desktop << EOF
 [Desktop Entry]
 Name=Linux Container
-Comment=Open Proot Shell with GPU support
-Exec=${term_cmd} -e "bash /root/start-proot.sh"
+Comment=Open Ubuntu Chroot Shell
+Exec=${term_cmd} -e "bash $HOME/start-chroot.sh"
 Icon=system-run
 Type=Application
 Terminal=false
 EOF
+    else
+        cat > ~/Desktop/Proot.desktop << EOF
+[Desktop Entry]
+Name=Linux Container
+Comment=Open Proot Shell with GPU support
+Exec=${term_cmd} -e "bash $HOME/start-proot.sh"
+Icon=system-run
+Type=Application
+Terminal=false
+EOF
+    fi
 
     chmod +x ~/Desktop/*.desktop 2>/dev/null
-    echo -e "  [+] Shortcuts: Firefox, Files, Terminal, Proot"
+    if [ "$USE_CHROOT" = "true" ]; then
+        echo -e "  [+] Shortcuts: Firefox, Files, Terminal, Chroot"
+    else
+        echo -e "  [+] Shortcuts: Firefox, Files, Terminal, Proot"
+    fi
 }
 
 # ============== VNC (OPTIONAL — asked at end) ==============
@@ -1031,33 +1344,54 @@ COMPLETE
 
     echo -e "${WHITE}[*] ${DE_NAME} desktop is ready.${NC}"
     echo ""
-    echo -e "${CYAN}[*] Installed:${NC}"
-    echo "    - Firefox, Git, Python 3"
-    echo "    - GPU Acceleration (Turnip/Zink)"
-    echo "    - Proot Linux Container + App Bridge"
-    echo "    - Modern Dark XFCE Theme (Adwaita + Dracula terminal)"
-    echo ""
-    echo -e "${YELLOW}============================================================${NC}"
-    echo -e "${WHITE}  HOW TO START:${NC}"
-    echo -e "${YELLOW}============================================================${NC}"
-    echo ""
-    echo -e "  ${GREEN}Native X11 (recommended):${NC}"
-    echo -e "    ${WHITE}bash ~/start-x11.sh${NC}"
-    echo -e "    Then open the ${WHITE}Termux-X11${NC} app"
-    echo ""
-    if [ "$VNC_ENABLED" = "true" ]; then
-        echo -e "  ${GREEN}VNC (connect via any VNC Viewer):${NC}"
-        echo -e "    ${WHITE}bash ~/start-vnc.sh${NC}  → 127.0.0.1:5901"
+    if [ "$USE_CHROOT" = "true" ]; then
+        echo -e "${CYAN}[*] Installed:${NC}"
+        echo "    - Firefox, Git, Python 3"
+        echo "    - Ubuntu Chroot Environment"
+        echo "    - Modern XFCE Theme (Adwaita + Dracula terminal)"
         echo ""
+        echo -e "${YELLOW}============================================================${NC}"
+        echo -e "${WHITE}  HOW TO START:${NC}"
+        echo -e "${YELLOW}============================================================${NC}"
+        echo ""
+        echo -e "  ${GREEN}Native X11 (recommended):${NC}"
+        echo -e "    ${WHITE}bash ~/start-x11.sh${NC}"
+        echo -e "    Then open the ${WHITE}Termux-X11${NC} app"
+        echo ""
+        echo -e "  ${GREEN}Chroot Linux shell:${NC}"
+        echo -e "    ${WHITE}bash ~/start-chroot.sh${NC}"
+        echo ""
+        echo -e "  ${GREEN}Stop everything:${NC}"
+        echo -e "    ${WHITE}bash ~/stop-linux.sh${NC}"
+    else
+        echo -e "${CYAN}[*] Installed:${NC}"
+        echo "    - Firefox, Git, Python 3"
+        echo "    - GPU Acceleration (Turnip/Zink)"
+        echo "    - Proot Linux Container + App Bridge"
+        echo "    - Modern Dark XFCE Theme (Adwaita + Dracula terminal)"
+        echo ""
+        echo -e "${YELLOW}============================================================${NC}"
+        echo -e "${WHITE}  HOW TO START:${NC}"
+        echo -e "${YELLOW}============================================================${NC}"
+        echo ""
+        echo -e "  ${GREEN}Native X11 (recommended):${NC}"
+        echo -e "    ${WHITE}bash ~/start-x11.sh${NC}"
+        echo -e "    Then open the ${WHITE}Termux-X11${NC} app"
+        echo ""
+        if [ "$VNC_ENABLED" = "true" ]; then
+            echo -e "  ${GREEN}VNC (connect via any VNC Viewer):${NC}"
+            echo -e "    ${WHITE}bash ~/start-vnc.sh${NC}  → 127.0.0.1:5901"
+            echo ""
+        fi
+        echo -e "  ${GREEN}Proot Linux shell:${NC}"
+        echo -e "    ${WHITE}bash ~/start-proot.sh${NC}"
+        echo ""
+        echo -e "  ${GREEN}Install proot app → sync to XFCE menu:${NC}"
+        echo -e "    ${WHITE}bash ~/proot-menu-sync.sh${NC}"
+        echo ""
+        echo -e "  ${GREEN}Stop everything:${NC}"
+        echo -e "    ${WHITE}bash ~/stop-linux.sh${NC}"
     fi
-    echo -e "  ${GREEN}Proot Linux shell:${NC}"
-    echo -e "    ${WHITE}bash ~/start-proot.sh${NC}"
-    echo ""
-    echo -e "  ${GREEN}Install proot app → sync to XFCE menu:${NC}"
-    echo -e "    ${WHITE}bash ~/proot-menu-sync.sh${NC}"
-    echo ""
-    echo -e "  ${GREEN}Stop everything:${NC}"
-    echo -e "    ${WHITE}bash ~/stop-linux.sh${NC}"
     echo ""
     echo -e "${YELLOW}============================================================${NC}"
     echo ""
@@ -1083,7 +1417,13 @@ main() {
     step_audio
     step_apps
     step_python
-    step_proot
+
+    if [ "$USE_CHROOT" = "true" ]; then
+        step_chroot
+    else
+        step_proot
+    fi
+
     step_launchers
     step_theme_xfce
     step_shortcuts
@@ -1093,8 +1433,10 @@ main() {
 
     # Apply username to native Termux shell prompt
     BASHRC="$HOME/.bashrc"
-    grep -q "SETUP_USERNAME_PROMPT" "$BASHRC" 2>/dev/null || \
-        echo "# SETUP_USERNAME_PROMPT\nexport PS1='\[\033[01;32m\]${SETUP_USERNAME}@android\[\033[00m\]:\[\033[01;34m\]\w\[\033[00m\]\$ '" >> "$BASHRC"
+    grep -q "SETUP_USERNAME_PROMPT" "$BASHRC" 2>/dev/null || {
+        echo "# SETUP_USERNAME_PROMPT" >> "$BASHRC"
+        echo "export PS1='\[\033[01;32m\]${SETUP_USERNAME}@android\[\033[00m\]:\[\033[01;34m\]\w\[\033[00m\]\$ '" >> "$BASHRC"
+    }
     source "$BASHRC" 2>/dev/null || true
 
     show_completion

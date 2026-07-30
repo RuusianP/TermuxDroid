@@ -1,1 +1,0 @@
--keep class com.termux.x11.** { *; }
