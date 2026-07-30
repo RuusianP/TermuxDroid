@@ -30,13 +30,11 @@ WALLPAPER_URL="https://assets.ubuntu.com/v1/0a5c0d3d-ubuntu-22-04-wallpaper.jpg"
 RED=$'\033[0;31m'
 GREEN=$'\033[0;32m'
 YELLOW=$'\033[1;33m'
-BLUE=$'\033[0;34m'
 PURPLE=$'\033[0;35m'
 CYAN=$'\033[0;36m'
 WHITE=$'\033[1;37m'
 GRAY=$'\033[0;90m'
 NC=$'\033[0m'
-BOLD=$'\033[1m'
 
 # ============== PROGRESS FUNCTIONS ==============
 update_progress() {
@@ -85,13 +83,7 @@ install_pkg() {
     return $?
 }
 
-install_pkg_checked() {
-    if ! install_pkg "$@"; then
-        echo -e "  ${RED}[!] Failed to install ${2:-$1} — continuing${NC}"
-        return 1
-    fi
-    return 0
-}
+
 
 # ============== BANNER ==============
 show_banner() {
@@ -518,32 +510,23 @@ step_proot() {
 
     # ---- Create named user with working sudo ----
     echo -e "  [*] Creating proot user: ${SETUP_USERNAME} (with sudo)..."
-    proot-distro login "$PROOT_DISTRO" -- bash -c "
-        # Create user if not exists
-        id '$SETUP_USERNAME' > /dev/null 2>&1 || \
-            useradd -m -s /bin/bash '$SETUP_USERNAME'
-
-        # Add to sudo group
-        usermod -aG sudo '$SETUP_USERNAME' 2>/dev/null || true
-
-        # Drop-in sudoers file (cleaner than editing /etc/sudoers directly)
-        # Defaults !requiretty  — allows sudo without a real terminal (proot)
-        # NOPASSWD            — no password prompt
-        mkdir -p /etc/sudoers.d
-        echo 'Defaults !requiretty' > /etc/sudoers.d/proot-compat
-        echo '$SETUP_USERNAME ALL=(ALL) NOPASSWD: ALL' >> /etc/sudoers.d/proot-compat
-        chmod 0440 /etc/sudoers.d/proot-compat
-
-        # Ensure sudo binary has correct permissions (SETUID)
-        chmod u+s /usr/bin/sudo 2>/dev/null || true
-
-        # Nice coloured shell prompt
-        echo 'export PS1="\[\033[01;32m\]${SETUP_USERNAME}@linux\[\033[00m\]:\[\033[01;34m\]\w\[\033[00m\]\$ "' \
-            >> /home/'$SETUP_USERNAME'/.bashrc
-        # Useful aliases
-        echo 'alias ll="ls -la"' >> /home/'$SETUP_USERNAME'/.bashrc
-        echo 'alias update="sudo apt update && sudo apt upgrade -y"' >> /home/'$SETUP_USERNAME'/.bashrc
-    " 2>/dev/null || true
+    PROOT_SETUP_SCRIPT="${TMPDIR:-/tmp}/proot-user-setup-$$.sh"
+    cat > "$PROOT_SETUP_SCRIPT" << 'PROOTSETUP'
+#!/bin/bash
+USERNAME="$1"
+id "$USERNAME" > /dev/null 2>&1 || useradd -m -s /bin/bash "$USERNAME"
+usermod -aG sudo "$USERNAME" 2>/dev/null || true
+mkdir -p /etc/sudoers.d
+echo 'Defaults !requiretty' > /etc/sudoers.d/proot-compat
+echo "$USERNAME ALL=(ALL) NOPASSWD: ALL" >> /etc/sudoers.d/proot-compat
+chmod 0440 /etc/sudoers.d/proot-compat
+chmod u+s /usr/bin/sudo 2>/dev/null || true
+printf "export PS1='\\\\[\\\\033[01;32m\\\\]%s@linux\\\\[\\\\033[00m\\\\]:\\\\[\\\\033[01;34m\\\\]\\\\w\\\\[\\\\033[00m\\\\]\\\\$ '\n" "$USERNAME" >> /home/"$USERNAME"/.bashrc
+echo 'alias ll="ls -la"' >> /home/"$USERNAME"/.bashrc
+echo 'alias update="sudo apt update && sudo apt upgrade -y"' >> /home/"$USERNAME"/.bashrc
+PROOTSETUP
+    proot-distro login "$PROOT_DISTRO" -- bash "$PROOT_SETUP_SCRIPT" "$SETUP_USERNAME" 2>/dev/null || true
+    rm -f "$PROOT_SETUP_SCRIPT"
     echo -e "  [+] Proot user '${SETUP_USERNAME}' created with passwordless sudo"
 
     TERMUX_VK_ICD="/data/data/com.termux/files/usr/share/vulkan/icd.d"
@@ -878,7 +861,7 @@ export HOST="android-linux"
 pkill -9 -f "termux-x11" 2>/dev/null
 pkill -9 -f "Xvnc" 2>/dev/null
 ${KILL_CMD}
-pkill -9 -f "dbus" 2>/dev/null
+pkill -9 -f "dbus-daemon" 2>/dev/null
 
 unset PULSE_SERVER
 pulseaudio --kill 2>/dev/null
@@ -916,7 +899,7 @@ SU=""
 command -v su >/dev/null 2>&1 && SU="su -c"
 echo "Stopping all sessions..."
 pkill -9 -f "termux-x11" 2>/dev/null || true
-pkill -9 -f "pulseaudio" 2>/dev/null || true
+pkill -15 -f "pulseaudio" 2>/dev/null || pkill -9 -f "pulseaudio" 2>/dev/null || true
 echo "Unmounting chroot filesystems..."
 \$SU "umount -l \$CHROOT_ROOTFS/dev/pts 2>/dev/null" || true
 \$SU "umount -l \$CHROOT_ROOTFS/dev 2>/dev/null" || true
@@ -933,9 +916,9 @@ echo "Stopping all sessions..."
 pkill -9 -f "termux-x11" 2>/dev/null
 vncserver -kill :1 2>/dev/null
 pkill -9 -f "Xvnc" 2>/dev/null
-pkill -9 -f "pulseaudio" 2>/dev/null
+pkill -15 -f "pulseaudio" 2>/dev/null || pkill -9 -f "pulseaudio" 2>/dev/null || true
 ${KILL_CMD}
-pkill -9 -f "dbus" 2>/dev/null
+pkill -9 -f "dbus-daemon" 2>/dev/null
 rm -f /tmp/.X1-lock /tmp/.X11-unix/X1 2>/dev/null
 echo "Done."
 STOPEOF
@@ -1316,7 +1299,7 @@ echo "=============================================="
 echo "  VNC Ready! Connect with any VNC Viewer:"
 echo "    Local   : 127.0.0.1:5901"
 [ -n "\$DEVICE_IP" ] && echo "    Network : \${DEVICE_IP}:5901"
-echo "    Password: ${VNC_PASS}"
+echo "    Password: (configured in ~/.vnc/passwd)"
 echo "=============================================="
 VNCEOF
         chmod +x ~/start-vnc.sh
@@ -1433,9 +1416,16 @@ main() {
         echo "# SETUP_USERNAME_PROMPT" >> "$BASHRC"
         printf "export PS1='\\[\\033[01;32m\\]%s@android\\[\\033[00m\\]:\\[\\033[01;34m\\]\\w\\[\\033[00m\\]\\$ '\n" "$SETUP_USERNAME" >> "$BASHRC"
     }
+    # shellcheck disable=SC1090
     source "$BASHRC" 2>/dev/null || true
 
     show_completion
 }
+
+# Cleanup temp files on exit
+cleanup() {
+    rm -f "${TMPDIR:-/tmp}/proot-user-setup-"*.sh 2>/dev/null || true
+}
+trap cleanup EXIT
 
 main

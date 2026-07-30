@@ -1,5 +1,17 @@
 # Changelog
 
+## Production Readiness
+
+- Resolved all shellcheck warnings across both scripts (zero warnings)
+- Replaced fragile `bash -c "..."` quoting in proot user setup with temp script file
+- Removed dead code: `install_pkg_checked()`, `BLUE`, `BOLD`, `CPU_ABI`, `GPU_VENDOR`, `HAS_ROOT`, `PROOT_BIN`
+- Fixed overly broad `pkill -9 -f "dbus"` → `pkill -9 -f "dbus-daemon"` (safer process targeting)
+- Graceful pulseaudio shutdown: SIGTERM first, fallback to SIGKILL
+- VNC password no longer hardcoded in generated `start-vnc.sh` (references passwd file)
+- Added `trap cleanup EXIT` for temp file cleanup on script exit
+- Added `# shellcheck disable=SC1090` directive for dynamic source path
+- Removed unused color variables and dead code paths
+
 ## Code Quality & Bug Fixes
 
 - Fixed unquoted variable `$PHONE_IP` in `pi-launch_phone.sh`
