@@ -822,7 +822,7 @@ echo ""
 \$SU "mount -t devpts devpts \$CHROOT_ROOTFS/dev/pts 2>/dev/null" || true
 \$SU "mount -t tmpfs tmpfs \$CHROOT_ROOTFS/tmp 2>/dev/null" || true
 
-pkill -9 -f "termux.x11" 2>/dev/null
+pkill -9 -f "termux-x11" 2>/dev/null
 pkill -9 -f "Xvnc" 2>/dev/null
 
 unset PULSE_SERVER
@@ -880,7 +880,7 @@ export LOGNAME="$SETUP_USERNAME"
 export HOSTNAME="android-linux"
 export HOST="android-linux"
 
-pkill -9 -f "termux.x11" 2>/dev/null
+pkill -9 -f "termux-x11" 2>/dev/null
 pkill -9 -f "Xvnc" 2>/dev/null
 ${KILL_CMD}
 pkill -9 -f "dbus" 2>/dev/null
@@ -920,7 +920,7 @@ CHROOT_ROOTFS="$CHROOT_ROOTFS"
 SU=""
 command -v su >/dev/null 2>&1 && SU="su -c"
 echo "Stopping all sessions..."
-pkill -9 -f "termux.x11" 2>/dev/null || true
+pkill -9 -f "termux-x11" 2>/dev/null || true
 pkill -9 -f "pulseaudio" 2>/dev/null || true
 echo "Unmounting chroot filesystems..."
 \$SU "umount -l \$CHROOT_ROOTFS/dev/pts 2>/dev/null" || true
@@ -935,7 +935,7 @@ CHROOTSTOP
         cat > ~/stop-linux.sh << STOPEOF
 #!/data/data/com.termux/files/usr/bin/bash
 echo "Stopping all sessions..."
-pkill -9 -f "termux.x11" 2>/dev/null
+pkill -9 -f "termux-x11" 2>/dev/null
 vncserver -kill :1 2>/dev/null
 pkill -9 -f "Xvnc" 2>/dev/null
 pkill -9 -f "pulseaudio" 2>/dev/null
@@ -1301,7 +1301,7 @@ echo "  [*] Starting ${DE_NAME} via TigerVNC..."
 echo "=============================================="
 echo ""
 
-pkill -9 -f "termux.x11" 2>/dev/null
+pkill -9 -f "termux-x11" 2>/dev/null
 vncserver -kill ${VNC_DISPLAY} 2>/dev/null
 rm -f /tmp/.X1-lock /tmp/.X11-unix/X1 2>/dev/null
 
@@ -1315,7 +1315,7 @@ export PULSE_SERVER=127.0.0.1
 
 vncserver -localhost no -geometry ${VNC_GEOMETRY} -depth 24 ${VNC_DISPLAY}
 
-DEVICE_IP=\$(ip -4 addr show wlan0 2>/dev/null | grep -oP '(?<=inet\s)\d+(\.\d+){3}' | head -1)
+DEVICE_IP=\$(ip -4 route get 1.1.1.1 2>/dev/null | awk '{print \$NF; exit}')
 echo ""
 echo "=============================================="
 echo "  VNC Ready! Connect with any VNC Viewer:"

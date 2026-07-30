@@ -36,7 +36,7 @@ if [ -n "$PHONE_IP" ]; then
     # -CompressLevel 9: High compression to save Pi CPU
     # -LowColorLevel 1: Use 16-bit color for 2x faster rendering
     
-    vncviewer $PHONE_IP::5901 \
+    vncviewer "$PHONE_IP"::5901 \
         -FullScreen \
         -QualityLevel 4 \
         -CompressLevel 9 \
