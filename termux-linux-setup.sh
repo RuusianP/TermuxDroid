@@ -25,19 +25,18 @@ USE_CHROOT=false
 WALLPAPER_URL="https://assets.ubuntu.com/v1/0a5c0d3d-ubuntu-22-04-wallpaper.jpg"
 
 # Root mode: detect at runtime
-HAS_ROOT=false
 
 # ============== COLORS ==============
-RED='\033[0;31m'
-GREEN='\033[0;32m'
-YELLOW='\033[1;33m'
-BLUE='\033[0;34m'
-PURPLE='\033[0;35m'
-CYAN='\033[0;36m'
-WHITE='\033[1;37m'
-GRAY='\033[0;90m'
-NC='\033[0m'
-BOLD='\033[1m'
+RED=$'\033[0;31m'
+GREEN=$'\033[0;32m'
+YELLOW=$'\033[1;33m'
+BLUE=$'\033[0;34m'
+PURPLE=$'\033[0;35m'
+CYAN=$'\033[0;36m'
+WHITE=$'\033[1;37m'
+GRAY=$'\033[0;90m'
+NC=$'\033[0m'
+BOLD=$'\033[1m'
 
 # ============== PROGRESS FUNCTIONS ==============
 update_progress() {
@@ -62,17 +61,17 @@ spinner() {
     local message=$2
     local spin='-\|/'
     local i=0
-    while kill -0 $pid 2>/dev/null; do
+    while kill -0 "$pid" 2>/dev/null; do
         i=$(( (i+1) % 4 ))
-        printf "\r  [*] ${message} ${CYAN}${spin:$i:1}${NC}  "
+        printf "\r  [*] %s %s%s%s  " "$message" "${CYAN}" "${spin:$i:1}" "${NC}"
         sleep 0.1
     done
-    wait $pid
+    wait "$pid"
     local exit_code=$?
-    if [ $exit_code -eq 0 ]; then
-        printf "\r  [+] ${message}                    \n"
+    if [ "$exit_code" -eq 0 ]; then
+        printf "\r  [+] %s                    \n" "$message"
     else
-        printf "\r  [-] ${message} ${RED}(failed)${NC}     \n"
+        printf "\r  [-] %s %s(failed)%s     \n" "$message" "${RED}" "${NC}"
     fi
     return $exit_code
 }
@@ -81,7 +80,7 @@ install_pkg() {
     local pkg=$1
     local name=${2:-$pkg}
     DEBIAN_FRONTEND=noninteractive apt-get install -y \
-        -o Dpkg::Options::="--force-confold" $pkg > /dev/null 2>&1 &
+        -o Dpkg::Options::="--force-confold" "$pkg" > /dev/null 2>&1 &
     spinner $! "Installing ${name}..."
     return $?
 }
@@ -124,8 +123,6 @@ setup_environment() {
     DEVICE_MODEL=$(getprop ro.product.model 2>/dev/null || echo "Unknown")
     DEVICE_BRAND=$(getprop ro.product.brand 2>/dev/null || echo "Unknown")
     ANDROID_VERSION=$(getprop ro.build.version.release 2>/dev/null || echo "Unknown")
-    CPU_ABI=$(getprop ro.product.cpu.abi 2>/dev/null || echo "arm64-v8a")
-    GPU_VENDOR=$(getprop ro.hardware.egl 2>/dev/null || echo "")
 
     echo -e "  [*] Device : ${WHITE}${DEVICE_BRAND} ${DEVICE_MODEL}${NC}"
     echo -e "  [*] Android: ${WHITE}${ANDROID_VERSION}${NC}"
@@ -185,10 +182,9 @@ setup_environment() {
 
     # ---- Root detection ----
     if command -v su >/dev/null 2>&1 && su -c 'id -u' 2>/dev/null | grep -q '^0$'; then
-        HAS_ROOT=true
         echo -e "  ${GREEN}[+] Root access detected${NC}"
         echo -e "      ${YELLOW}You can use chroot (faster) or proot (compatible).${NC}"
-        read -p "  Use chroot mode for better performance? (y/N): " CHROOT_ANSWER
+        read -r -p "  Use chroot mode for better performance? (y/N): " CHROOT_ANSWER
         CHROOT_ANSWER=${CHROOT_ANSWER:-N}
         if [[ "$CHROOT_ANSWER" =~ ^[Yy]$ ]]; then
             USE_CHROOT=true
@@ -550,7 +546,6 @@ step_proot() {
     " 2>/dev/null || true
     echo -e "  [+] Proot user '${SETUP_USERNAME}' created with passwordless sudo"
 
-    PROOT_BIN="/data/data/com.termux/files/usr/bin/proot-distro"
     TERMUX_VK_ICD="/data/data/com.termux/files/usr/share/vulkan/icd.d"
     TERMUX_LIB="/data/data/com.termux/files/usr/lib"
 
@@ -1158,7 +1153,7 @@ AREOF
         # Fallback: generate dark gradient with ImageMagick
         if command -v convert > /dev/null 2>&1; then
             (convert -size 1920x1080 \
-                gradient:"#0f0c29"-"#302b63" \
+                gradient:#0f0c29-#302b63 \
                 "$WALLPAPER_FILE" > /dev/null 2>&1) &
             spinner $! "Generating gradient wallpaper..."
             [ -f "$WALLPAPER_FILE" ] && WALLPAPER_OK=true && \
@@ -1251,15 +1246,15 @@ step_vnc_optional() {
     echo -e "  VNC lets you connect from another device (phone, PC, tablet)"
     echo -e "  using any VNC Viewer app over WiFi or USB."
     echo ""
-    read -p "  Install VNC support? (y/N): " VNC_ANSWER
+    read -r -p "  Install VNC support? (y/N): " VNC_ANSWER
     VNC_ANSWER=${VNC_ANSWER:-N}
 
     if [[ "$VNC_ANSWER" =~ ^[Yy]$ ]]; then
         VNC_ENABLED=true
 
-        read -p "  VNC password [default: 123456]: " VNC_PASS_IN
+        read -r -p "  VNC password [default: 123456]: " VNC_PASS_IN
         VNC_PASS="${VNC_PASS_IN:-123456}"
-        read -p "  Resolution [default: 1280x720]: " VNC_GEO_IN
+        read -r -p "  Resolution [default: 1280x720]: " VNC_GEO_IN
         VNC_GEOMETRY="${VNC_GEO_IN:-1280x720}"
         VNC_DISPLAY=":1"
 
@@ -1302,7 +1297,7 @@ echo "=============================================="
 echo ""
 
 pkill -9 -f "termux-x11" 2>/dev/null
-vncserver -kill ${VNC_DISPLAY} 2>/dev/null
+vncserver -kill "${VNC_DISPLAY}" 2>/dev/null
 rm -f /tmp/.X1-lock /tmp/.X11-unix/X1 2>/dev/null
 
 unset PULSE_SERVER
@@ -1313,7 +1308,7 @@ sleep 1
 pactl load-module module-native-protocol-tcp auth-ip-acl=127.0.0.1 auth-anonymous=1 2>/dev/null
 export PULSE_SERVER=127.0.0.1
 
-vncserver -localhost no -geometry ${VNC_GEOMETRY} -depth 24 ${VNC_DISPLAY}
+vncserver -localhost no -geometry "${VNC_GEOMETRY}" -depth 24 "${VNC_DISPLAY}"
 
 DEVICE_IP=\$(ip -4 route get 1.1.1.1 2>/dev/null | awk '{print \$NF; exit}')
 echo ""
@@ -1436,7 +1431,7 @@ main() {
     BASHRC="$HOME/.bashrc"
     grep -q "SETUP_USERNAME_PROMPT" "$BASHRC" 2>/dev/null || {
         echo "# SETUP_USERNAME_PROMPT" >> "$BASHRC"
-        echo "export PS1='\[\033[01;32m\]${SETUP_USERNAME}@android\[\033[00m\]:\[\033[01;34m\]\w\[\033[00m\]\$ '" >> "$BASHRC"
+        printf "export PS1='\\[\\033[01;32m\\]%s@android\\[\\033[00m\\]:\\[\\033[01;34m\\]\\w\\[\\033[00m\\]\\$ '\n" "$SETUP_USERNAME" >> "$BASHRC"
     }
     source "$BASHRC" 2>/dev/null || true
 
