@@ -2,12 +2,12 @@
 
 ## RuusianP Rebrand
 
-- Removed all references to orailnoor/DroidDesk
-- Updated all URLs to point to RuusianP/TermuxDroid
-- Rebranded project as an independent build by RuusianP
-- Cleaned up all attribution to previous maintainer
-- Added CONTRIBUTING.md, SECURITY.md, and CODE_OF_CONDUCT.md
+- Project rebranded as an independent build by RuusianP
+- All URLs updated to point to RuusianP/TermuxDroid
+- Rebranded project attribution to RuusianP
+- Added project governance documentation (CONTRIBUTING.md, SECURITY.md, CODE_OF_CONDUCT.md)
 - Updated setup script completion banner with RuusianP branding
+- Updated LICENSE with RuusianP copyright notice
 
 ## Prior History
 
